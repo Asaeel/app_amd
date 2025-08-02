@@ -1,0 +1,716 @@
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'dart:math';
+
+void main() {
+  runApp(FamilyExpenseApp());
+}
+
+class FamilyExpenseApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'محلل المصروفات العائلية',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        fontFamily: 'Cairo',
+      ),
+      home: ExpenseAnalyzerScreen(),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
+
+class FamilyMember {
+  String name;
+  String avatar;
+  double limit;
+  double spent;
+  Color color;
+
+  FamilyMember({
+    required this.name,
+    required this.avatar,
+    required this.limit,
+    required this.spent,
+    required this.color,
+  });
+
+  double get percentage => (spent / limit) * 100;
+  bool get isOverLimit => spent > limit;
+  double get excess => spent - limit;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'avatar': avatar,
+    'limit': limit,
+    'spent': spent,
+    'color': color.value,
+  };
+
+  factory FamilyMember.fromJson(Map<String, dynamic> json) => FamilyMember(
+    name: json['name'],
+    avatar: json['avatar'],
+    limit: json['limit'],
+    spent: json['spent'],
+    color: Color(json['color']),
+  );
+}
+
+class AIAnalysis {
+  String message;
+  String emoji;
+  Color color;
+
+  AIAnalysis({required this.message, required this.emoji, required this.color});
+}
+
+class ExpenseAnalyzerScreen extends StatefulWidget {
+  @override
+  _ExpenseAnalyzerScreenState createState() => _ExpenseAnalyzerScreenState();
+}
+
+class _ExpenseAnalyzerScreenState extends State<ExpenseAnalyzerScreen>
+    with TickerProviderStateMixin {
+  
+  List<FamilyMember> familyMembers = [
+    FamilyMember(
+      name: 'أحمد',
+      avatar: '👨',
+      limit: 3000,
+      spent: 0,
+      color: Color(0xFFFF6B6B),
+    ),
+    FamilyMember(
+      name: 'فاطمة',
+      avatar: '👩',
+      limit: 200,
+      spent: 0,
+      color: Color(0xFF4ECDC4),
+    ),
+    FamilyMember(
+      name: 'محمد',
+      avatar: '👦',
+      limit: 778,
+      spent: 0,
+      color: Color(0xFF45B7D1),
+    ),
+  ];
+
+  String selectedPerson = 'أحمد';
+  TextEditingController amountController = TextEditingController();
+  AIAnalysis? currentAnalysis;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+    loadData();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    amountController.dispose();
+    super.dispose();
+  }
+
+  // تحميل البيانات من SharedPreferences
+  Future<void> loadData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? savedData = prefs.getString('familyExpenses');
+    
+    if (savedData != null) {
+      Map<String, dynamic> data = json.decode(savedData);
+      setState(() {
+        for (int i = 0; i < familyMembers.length; i++) {
+          String memberName = familyMembers[i].name;
+          if (data.containsKey(memberName)) {
+            familyMembers[i].spent = data[memberName]['spent']?.toDouble() ?? 0.0;
+          }
+        }
+      });
+    }
+  }
+
+  // حفظ البيانات في SharedPreferences
+  Future<void> saveData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    Map<String, dynamic> data = {};
+    
+    for (FamilyMember member in familyMembers) {
+      data[member.name] = {'spent': member.spent};
+    }
+    
+    await prefs.setString('familyExpenses', json.encode(data));
+  }
+
+  // تحليل الإنفاق بالذكاء الاصطناعي
+  AIAnalysis analyzeExpense(FamilyMember member, double amount) {
+    double percentage = member.percentage;
+    
+    if (amount > member.limit * 0.3) {
+      return AIAnalysis(
+        message: 'تحذير: مصروف كبير (${amount.toInt()} ريال) لـ ${member.name}. هذا المبلغ يشكل ${((amount/member.limit)*100).toStringAsFixed(1)}% من الميزانية!',
+        emoji: '🚨',
+        color: Colors.red,
+      );
+    } else if (percentage > 100) {
+      return AIAnalysis(
+        message: 'خطر: ${member.name} تجاوز الحد الأعلى! المبلغ الزائد: ${member.excess.toInt()} ريال',
+        emoji: '🔴',
+        color: Colors.red,
+      );
+    } else if (percentage > 80) {
+      return AIAnalysis(
+        message: 'تنبيه: ${member.name} اقترب من الحد الأعلى (${percentage.toStringAsFixed(1)}%). يُنصح بتقليل الإنفاق',
+        emoji: '🟡',
+        color: Colors.orange,
+      );
+    } else if (percentage > 50) {
+      return AIAnalysis(
+        message: 'معلومة: ${member.name} استخدم ${percentage.toStringAsFixed(1)}% من الميزانية. الوضع طبيعي',
+        emoji: '🟢',
+        color: Colors.green,
+      );
+    } else {
+      return AIAnalysis(
+        message: 'ممتاز: إنفاق ${member.name} ضمن المعدل المثالي (${percentage.toStringAsFixed(1)}%)',
+        emoji: '✅',
+        color: Colors.green,
+      );
+    }
+  }
+
+  // إضافة مصروف جديد
+  void addExpense() {
+    double? amount = double.tryParse(amountController.text);
+    
+    if (amount == null || amount <= 0) {
+      _showErrorDialog('يرجى إدخال مبلغ صحيح أكبر من صفر');
+      return;
+    }
+
+    FamilyMember member = familyMembers.firstWhere((m) => m.name == selectedPerson);
+    member.spent += amount;
+
+    // تحليل الإنفاق
+    AIAnalysis analysis = analyzeExpense(member, amount);
+    
+    setState(() {
+      currentAnalysis = analysis;
+    });
+
+    // تشغيل الأنيميشن
+    _animationController.forward().then((_) {
+      Future.delayed(Duration(seconds: 4), () {
+        if (mounted) {
+          _animationController.reverse();
+        }
+      });
+    });
+
+    // التحقق من تجاوز الحد الأعلى
+    if (member.isOverLimit) {
+      _showLimitExceededDialog(member);
+    }
+
+    // حفظ البيانات
+    saveData();
+    
+    // مسح حقل الإدخال
+    amountController.clear();
+  }
+
+  // عرض نافذة خطأ
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.error, color: Colors.red),
+              SizedBox(width: 10),
+              Text('خطأ'),
+            ],
+          ),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('حسناً'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // عرض نافذة تجاوز الحد الأعلى
+  void _showLimitExceededDialog(FamilyMember member) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Text('⚠️', style: TextStyle(fontSize: 24)),
+              SizedBox(width: 10),
+              Text('تحذير: تجاوز الحد الأعلى!', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+          content: Container(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${member.name} تجاوز الحد الأعلى المسموح!', 
+                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                SizedBox(height: 15),
+                Container(
+                  padding: EdgeInsets.all(15),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('الحد الأعلى: ${member.limit.toInt()} ريال'),
+                      Text('المصروف الحالي: ${member.spent.toInt()} ريال'),
+                      Text(
+                        'المبلغ الزائد: ${member.excess.toInt()} ريال',
+                        style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 10),
+                Text('الرجاء مراجعة الميزانية وإعادة تقييم المصروفات',
+                     style: TextStyle(color: Colors.grey[600])),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('حسناً'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // إعادة تعيين جميع المصروفات
+  void resetAll() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('تأكيد'),
+          content: Text('هل أنت متأكد من إعادة تعيين جميع المصروفات؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  for (FamilyMember member in familyMembers) {
+                    member.spent = 0;
+                  }
+                  currentAnalysis = null;
+                });
+                saveData();
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('✅ تم إعادة تعيين جميع المصروفات بنجاح'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              },
+              child: Text('تأكيد', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // الهيدر
+              Container(
+                padding: EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    Text(
+                      '🏠 مصروفات العائلة',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 5),
+                    Text(
+                      'نظام ذكي لتتبع وتحليل المصروفات',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              
+              // المحتوى الرئيسي
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(30),
+                      topRight: Radius.circular(30),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        // قائمة أفراد العائلة
+                        ...familyMembers.map((member) => _buildMemberCard(member)).toList(),
+                        
+                        SizedBox(height: 20),
+                        
+                        // قسم إضافة المصروفات
+                        _buildAddExpenseSection(),
+                        
+                        SizedBox(height: 20),
+                        
+                        // تحليل الذكاء الاصطناعي
+                        if (currentAnalysis != null) _buildAIAnalysis(),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMemberCard(FamilyMember member) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 15),
+      padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: member.color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 1,
+            blurRadius: 5,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // هيدر العضو
+          Row(
+            children: [
+              Container(
+                width: 50,
+                height: 50,
+                decoration: BoxDecoration(
+                  color: member.color,
+                  borderRadius: BorderRadius.circular(25),
+                ),
+                child: Center(
+                  child: Text(
+                    member.avatar,
+                    style: TextStyle(fontSize: 24),
+                  ),
+                ),
+              ),
+              SizedBox(width: 15),
+              Expanded(
+                child: Text(
+                  member.name,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+              ),
+              if (member.isOverLimit)
+                Container(
+                  padding: EdgeInsets.all(5),
+                  child: Text('⚠️', style: TextStyle(fontSize: 20)),
+                ),
+            ],
+          ),
+          
+          SizedBox(height: 15),
+          
+          // شريط التقدم
+          Container(
+            height: 25,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(12.5),
+            ),
+            child: Stack(
+              children: [
+                Container(
+                  width: (MediaQuery.of(context).size.width - 80) * 
+                         min(member.percentage / 100, 1.0),
+                  decoration: BoxDecoration(
+                    color: member.isOverLimit ? Colors.red : member.color,
+                    borderRadius: BorderRadius.circular(12.5),
+                  ),
+                ),
+                Center(
+                  child: Text(
+                    '${member.percentage.toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[800],
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          SizedBox(height: 10),
+          
+          // معلومات المبالغ
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'المصروف: ${member.spent.toInt()} ريال',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[700],
+                ),
+              ),
+              Text(
+                'الحد الأعلى: ${member.limit.toInt()} ريال',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddExpenseSection() {
+    return Container(
+      padding: EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFFffecd2), Color(0xFFfcb69f)],
+        ),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '➕ إضافة مصروف جديد',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[800],
+            ),
+          ),
+          
+          SizedBox(height: 15),
+          
+          // اختيار الشخص
+          Row(
+            children: [
+              Text('الشخص:', style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(width: 10),
+              Expanded(
+                child: DropdownButton<String>(
+                  value: selectedPerson,
+                  isExpanded: true,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      selectedPerson = newValue!;
+                    });
+                  },
+                  items: familyMembers.map<DropdownMenuItem<String>>((FamilyMember member) {
+                    return DropdownMenuItem<String>(
+                      value: member.name,
+                      child: Row(
+                        children: [
+                          Text(member.avatar, style: TextStyle(fontSize: 20)),
+                          SizedBox(width: 10),
+                          Text(member.name),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+          
+          SizedBox(height: 15),
+          
+          // إدخال المبلغ
+          Row(
+            children: [
+              Text('المبلغ:', style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: amountController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    hintText: 'أدخل المبلغ...',
+                    suffixText: 'ريال',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                  ),
+                  onSubmitted: (_) => addExpense(),
+                ),
+              ),
+            ],
+          ),
+          
+          SizedBox(height: 20),
+          
+          // الأزرار
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: addExpense,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color(0xFF667eea),
+                    padding: EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: Text(
+                    '💰 إضافة مصروف',
+                    style: TextStyle(fontSize: 16, color: Colors.white),
+                  ),
+                ),
+              ),
+              SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: resetAll,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    padding: EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: Text(
+                    '🔄 إعادة تعيين',
+                    style: TextStyle(fontSize: 16, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAIAnalysis() {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Container(
+        width: double.infinity,
+        padding: EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFFa8edea), Color(0xFFfed6e3)],
+          ),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: currentAnalysis!.color, width: 2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '🤖 تحليل الذكاء الاصطناعي',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey[800],
+                  ),
+                ),
+                Spacer(),
+                Text(
+                  currentAnalysis!.emoji,
+                  style: TextStyle(fontSize: 24),
+                ),
+              ],
+            ),
+            SizedBox(height: 10),
+            Text(
+              currentAnalysis!.message,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[700],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
