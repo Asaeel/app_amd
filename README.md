@@ -87,3 +87,5 @@ This project was created by a student as part of a learning exercise in mobile a
 It focuses on creativity, design structure, and basic functionality to support future improvements.
 
 ---
+
+تم عمل المشروع مع زميلتي [@reemfaiz](https://github.com/reemfaiz)
